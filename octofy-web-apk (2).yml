@@ -1,0 +1,77 @@
+name: Build Octofy Web APK
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Prepare web files
+        run: |
+          mkdir -p octofy-app/www
+          cp index.html manifest.json sw.js icon.svg octofy-app/www/
+      - name: Create Capacitor project
+        working-directory: octofy-app
+        run: |
+          npm init -y
+          npm i @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          npx cap init Octofy com.octofy.app --web-dir=www
+          npx cap add android
+      - name: Android permissions (microphone for voice messages)
+        working-directory: octofy-app
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n</manifest>#' "$M"
+          grep -c RECORD_AUDIO "$M"
+      - name: Generate app icons
+        working-directory: octofy-app
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y librsvg2-bin
+          npm i -D @capacitor/assets@3
+          mkdir -p assets
+          rsvg-convert -w 1024 -h 1024 ../icon.svg -o assets/icon-only.png
+          cat > fg.svg <<'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+            <defs>
+              <linearGradient id="b" gradientUnits="userSpaceOnUse" x1="150" y1="90" x2="370" y2="430">
+                <stop offset="0" stop-color="#b79cff"/>
+                <stop offset="0.55" stop-color="#8b5cf6"/>
+                <stop offset="1" stop-color="#6d28d9"/>
+              </linearGradient>
+            </defs>
+            <g transform="translate(512 512) scale(1.7) translate(-256 -258)">
+              <rect x="96" y="96" width="320" height="270" rx="135" fill="url(#b)"/>
+              <path d="M148 322 Q150 384 98 418 Q186 420 246 360 Z" fill="url(#b)"/>
+              <path d="M150 190 C150 150 190 118 238 116 C204 128 176 156 170 196 Z" fill="#ffffff" opacity="0.28"/>
+              <circle cx="196" cy="236" r="25" fill="#ffffff"/>
+              <circle cx="256" cy="236" r="25" fill="#ffffff"/>
+              <circle cx="316" cy="236" r="25" fill="#ffffff"/>
+            </g>
+          </svg>
+          EOF
+          cat > bg.svg <<'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+            <rect width="1024" height="1024" fill="#150f2e"/>
+          </svg>
+          EOF
+          rsvg-convert -w 1024 -h 1024 fg.svg -o assets/icon-foreground.png
+          rsvg-convert -w 1024 -h 1024 bg.svg -o assets/icon-background.png
+          npx capacitor-assets generate --android
+      - name: Sync web files
+        working-directory: octofy-app
+        run: npx cap sync android
+      - name: Build APK
+        working-directory: octofy-app/android
+        run: ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: octofy-apk
+          path: octofy-app/android/app/build/outputs/apk/debug/app-debug.apk
